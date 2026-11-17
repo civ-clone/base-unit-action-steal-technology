@@ -1,5 +1,7 @@
 import City from '@civ-clone/core-city/City';
 import AgentSurvives from '@civ-clone/base-unit-agent/Rules/AgentSurvives';
+import AgentLost from '@civ-clone/base-unit-agent/Rules/AgentLost';
+import MissionMode from '@civ-clone/base-unit-agent/Rules/MissionMode';
 import MissionDetected from '@civ-clone/base-unit-agent/Rules/MissionDetected';
 import MissionTargets from '@civ-clone/base-unit-agent/Rules/MissionTargets';
 import SneakStealTechnology from '../SneakStealTechnology';
@@ -44,7 +46,11 @@ export const setUp = (answer: boolean | null) => {
     ),
     new Destroyed(
       new Effect((destroyed: Unit, by: Player | null): void => {
-        log.push(`destroyed ${destroyed === unit} ${by}`);
+        log.push(
+          `destroyed ${destroyed === unit} ${
+            by === null ? null : by === host ? 'host' : 'other'
+          }`
+        );
       })
     )
   );
@@ -134,7 +140,7 @@ describe('StealTechnology', (): void => {
       ]);
     });
 
-    it('destroys a Diplomat that is caught, before the mission', (): void => {
+    it("destroys a Diplomat that is caught before the mission, by the city's owner, with no `Moved`", (): void => {
       const set = setUp(true);
 
       survives(set, (mode: EscapeMode): boolean => mode !== -1);
@@ -142,8 +148,7 @@ describe('StealTechnology', (): void => {
 
       expect(set.log).to.deep.equal([
         'asked true true -1',
-        'moved true true',
-        'destroyed true null',
+        'destroyed true host',
       ]);
     });
 
@@ -298,6 +303,86 @@ describe('StealTechnology', (): void => {
         'moved true true',
         'destroyed true null',
       ]);
+    });
+  });
+
+  describe('MissionMode and AgentLost', (): void => {
+    it('asks the mode first, gives it to both checks, and reports the lost agent', (): void => {
+      const set = setUp(true),
+        asked: string[] = [];
+
+      set.ruleRegistry.register(
+        new MissionMode(
+          new Effect(
+            (unit: Unit, mission: UnitAction, defaultMode: EscapeMode) => {
+              set.log.push(`mode ${defaultMode}`);
+
+              return 1 as EscapeMode;
+            }
+          )
+        ),
+        new AgentSurvives(
+          new Effect(
+            (
+              unit: Unit,
+              mission: UnitAction,
+              mode: EscapeMode,
+              resolved: EscapeMode
+            ): boolean => {
+              asked.push(`${mode}/${resolved}`);
+
+              return mode === -1;
+            }
+          )
+        ),
+        new AgentLost(
+          new Effect(
+            (
+              unit: Unit,
+              city: City | null,
+              mission: UnitAction,
+              caught: boolean
+            ) => {
+              set.log.push(
+                `lost ${city === set.city} ${mission === set.action} ${caught}`
+              );
+            }
+          )
+        )
+      );
+      set.action.perform();
+
+      expect(asked).to.deep.equal(['-1/1', '1/1']);
+      expect(set.log).to.deep.equal([
+        'mode 0',
+        'stolen true true',
+        'moved true true',
+        'lost true true false',
+        'destroyed true null',
+      ]);
+    });
+
+    it('reports a caught agent as caught', (): void => {
+      const set = setUp(true);
+
+      set.ruleRegistry.register(
+        new AgentSurvives(new Effect((): boolean => false)),
+        new AgentLost(
+          new Effect(
+            (
+              unit: Unit,
+              city: City | null,
+              mission: UnitAction,
+              caught: boolean
+            ) => {
+              set.log.push(`lost ${caught}`);
+            }
+          )
+        )
+      );
+      set.action.perform();
+
+      expect(set.log).to.deep.equal(['lost true', 'destroyed true host']);
     });
   });
 });
